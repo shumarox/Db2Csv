@@ -2,10 +2,11 @@ package ice;
 
 import oracle.jdbc.OracleTypes;
 
-import java.io.File;
-import java.io.FileNotFoundException;
+import java.io.IOException;
 import java.math.BigDecimal;
 import java.nio.charset.Charset;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.sql.*;
 
 public class OracleCursor2Csv extends Db2Csv {
@@ -50,7 +51,7 @@ public class OracleCursor2Csv extends Db2Csv {
     }
 
     // for debug
-    public static void main(String[] args) throws SQLException, FileNotFoundException {
+    public static void main(String[] args) throws SQLException, IOException {
 
         FindBindValueFunction findBindValueFunction = bindName -> {
             switch (bindName) {
@@ -73,7 +74,7 @@ public class OracleCursor2Csv extends Db2Csv {
         String sql = "{call test_cursor.get_cursor(?, #{cond.comments}, #{cond.id})}";
 
         try (Connection conn = DriverManager.getConnection(jdbcUrlString)) {
-            int count = db2Csv.makeCsv(conn, sql, findBindValueFunction, new File(csvPathString));
+            int count = db2Csv.makeCsv(conn, sql, findBindValueFunction, () -> Files.newOutputStream(Paths.get(csvPathString)));
             System.out.println("Count: " + count);
         }
     }

@@ -4,6 +4,8 @@ import java.io.*;
 import java.math.BigDecimal;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.sql.*;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -16,6 +18,16 @@ import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 public class Db2Csv {
+
+    @FunctionalInterface
+    public interface OutputStreamSupplier {
+        OutputStream get() throws IOException;
+    }
+
+    @FunctionalInterface
+    public interface FindBindValueFunction {
+        Object apply(String bindName);
+    }
 
     public Charset charset = StandardCharsets.UTF_8;
     public String columnSeparator = ",";
@@ -131,11 +143,6 @@ public class Db2Csv {
         return statement;
     }
 
-    @FunctionalInterface
-    public interface FindBindValueFunction {
-        Object apply(String bindName);
-    }
-
     public PreparedStatement prepareStatement(Connection conn, String sql, Map<String, Object> bindMap) throws SQLException {
         return prepareStatement(conn, sql, bindMap::get);
     }
@@ -169,21 +176,21 @@ public class Db2Csv {
         return prepareStatement(conn, sql, bindValueList.toArray());
     }
 
-    public int makeCsv(Connection conn, String sql, Object[] binds, File csvFile) throws SQLException, FileNotFoundException {
+    public int makeCsv(Connection conn, String sql, Object[] binds, OutputStreamSupplier outputStreamSupplier) throws SQLException, IOException {
         try (PreparedStatement statement = prepareStatement(conn, sql, binds)) {
-            return makeCsv(statement, csvFile);
+            return makeCsv(statement, outputStreamSupplier);
         }
     }
 
-    public int makeCsv(Connection conn, String sql, Map<String, Object> bindMap, File csvFile) throws SQLException, FileNotFoundException {
+    public int makeCsv(Connection conn, String sql, Map<String, Object> bindMap, OutputStreamSupplier outputStreamSupplier) throws SQLException, IOException {
         try (PreparedStatement statement = prepareStatement(conn, sql, bindMap)) {
-            return makeCsv(statement, csvFile);
+            return makeCsv(statement, outputStreamSupplier);
         }
     }
 
-    public int makeCsv(Connection conn, String sql, FindBindValueFunction findBindValueFunction, File csvFile) throws SQLException, FileNotFoundException {
+    public int makeCsv(Connection conn, String sql, FindBindValueFunction findBindValueFunction, OutputStreamSupplier outputStreamSupplier) throws SQLException, IOException {
         try (PreparedStatement statement = prepareStatement(conn, sql, findBindValueFunction)) {
-            return makeCsv(statement, csvFile);
+            return makeCsv(statement, outputStreamSupplier);
         }
     }
 
@@ -191,7 +198,7 @@ public class Db2Csv {
         return statement.executeQuery();
     }
 
-    public int makeCsv(PreparedStatement statement, File csvFile) throws SQLException, FileNotFoundException {
+    public int makeCsv(PreparedStatement statement, OutputStreamSupplier outputStreamSupplier) throws SQLException, IOException {
 
         try (ResultSet rs = executeQuery(statement)) {
             ResultSetMetaData rsMeta = rs.getMetaData();
@@ -214,11 +221,7 @@ public class Db2Csv {
 
             int rowCount = 0;
 
-            FileOutputStream fos = new FileOutputStream(csvFile);
-
-            Writer writer = new OutputStreamWriter(fos, charset);
-
-            try (PrintWriter pw = new PrintWriter(new BufferedWriter(writer, bufferSize))) {
+            try (PrintWriter pw = new PrintWriter(new BufferedWriter(new OutputStreamWriter(outputStreamSupplier.get(), charset), bufferSize))) {
                 if (outputColumnNames) {
                     pw.print(columnNameCsv);
                     pw.print(returnCode);
@@ -237,7 +240,7 @@ public class Db2Csv {
     }
 
     // for debug
-    public static void main(String[] args) throws SQLException, FileNotFoundException {
+    public static void main(String[] args) throws SQLException, IOException {
 
         FindBindValueFunction findBindValueFunction = bindName -> {
             switch (bindName) {
@@ -259,7 +262,7 @@ public class Db2Csv {
         String sql = "select #{cond.comments} as \"comments\", #{cond.id} as \"cond\", a.* from TEST a where a.id like '%' || #{cond.id} || '%' escape '\\'";
 
         try (Connection conn = DriverManager.getConnection(jdbcUrlString)) {
-            int count = db2Csv.makeCsv(conn, sql, findBindValueFunction, new File(csvPathString));
+            int count = db2Csv.makeCsv(conn, sql, findBindValueFunction, () -> Files.newOutputStream(Paths.get(csvPathString)));
             System.out.println("Count: " + count);
         }
     }
