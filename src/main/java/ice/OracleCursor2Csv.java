@@ -8,15 +8,48 @@ import java.nio.charset.Charset;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.sql.*;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class OracleCursor2Csv extends Db2Csv {
 
-    public int cursorParameterIndex = -1;
+    public String cursorParameterPlaceHolderPattern = "\\$\\{cursor}";
+
+    public String outParameterPlaceHolderPattern = "\\$\\{([^}]+?)}";
+
+    private int cursorParameterIndex = -1;
+
+    private Set<Integer> outParameterPlaceHolderIndexSet = new HashSet<>();
 
     @Override
     public PreparedStatement prepareStatement(Connection conn, String sql, Object[] binds) throws SQLException {
+
+        Pattern pattern = Pattern.compile("\\?|" + cursorParameterPlaceHolderPattern + "|" + outParameterPlaceHolderPattern);
+        Matcher matcher = pattern.matcher(sql);
+
+        int index = 1;
+
+        while (matcher.find()) {
+            String placeHolder = matcher.group(0);
+
+            if (placeHolder.matches(cursorParameterPlaceHolderPattern)) {
+                if (cursorParameterIndex != -1) {
+                    throw new IllegalArgumentException(cursorParameterPlaceHolderPattern + "は1つのみ設定してください。");
+                }
+                cursorParameterIndex = index;
+            } else if (placeHolder.matches(outParameterPlaceHolderPattern)) {
+                outParameterPlaceHolderIndexSet.add(index);
+            }
+
+            index++;
+        }
+
+        sql = sql.replaceAll(cursorParameterPlaceHolderPattern + "|" + outParameterPlaceHolderPattern, "?");
+
         if (cursorParameterIndex == -1) {
-            throw new IllegalArgumentException("cursorParameterIndexを設定してください。");
+            throw new IllegalArgumentException("CURSOR型のOUT引数に" + cursorParameterPlaceHolderPattern + "を設定してください。");
         }
 
         CallableStatement statement = conn.prepareCall(sql);
@@ -27,18 +60,22 @@ public class OracleCursor2Csv extends Db2Csv {
             // 処理なし
         }
 
+        statement.registerOutParameter(cursorParameterIndex, OracleTypes.CURSOR);
+
+        for (int outParamIndex : outParameterPlaceHolderIndexSet) {
+            statement.registerOutParameter(outParamIndex, OracleTypes.VARCHAR);
+        }
+
         int column = 1;
 
         for (Object value : binds) {
-            if (column == cursorParameterIndex) {
+            if (column == cursorParameterIndex || outParameterPlaceHolderIndexSet.contains(column)) {
                 column++;
             }
 
             statement.setObject(column, value);
             column++;
         }
-
-        statement.registerOutParameter(cursorParameterIndex, OracleTypes.CURSOR);
 
         return statement;
     }
@@ -67,11 +104,10 @@ public class OracleCursor2Csv extends Db2Csv {
         OracleCursor2Csv db2Csv = new OracleCursor2Csv();
         db2Csv.charset = Charset.forName("Windows-31J");
         db2Csv.returnCode = "\r\n";
-        db2Csv.cursorParameterIndex = 1;
 
         String csvPathString = "C:\\temp\\test.csv";
         String jdbcUrlString = "jdbc:oracle:thin:test/test@192.168.0.99:1521/s12c";
-        String sql = "{call test_cursor.get_cursor(?, #{cond.comments}, #{cond.id})}";
+        String sql = "{call test_cursor.get_cursor(${cursor}, #{cond.comments}, #{cond.id}, ${dummy}, ${dummy})}";
 
         try (Connection conn = DriverManager.getConnection(jdbcUrlString)) {
             int count = db2Csv.makeCsv(conn, sql, findBindValueFunction, () -> Files.newOutputStream(Paths.get(csvPathString)));
@@ -86,7 +122,9 @@ public class OracleCursor2Csv extends Db2Csv {
             PROCEDURE GET_CURSOR(
                 CURSOR1 OUT CURSOR,
                 IN_COMMENTS IN VARCHAR2,
-                IN_ID IN NUMBER
+                IN_ID IN NUMBER,
+                OUT_DUMMY1 OUT NUMBER,
+                OUT_DUMMY2 OUT DATE
             );
         END TEST_CURSOR;
         /
@@ -95,7 +133,9 @@ public class OracleCursor2Csv extends Db2Csv {
             PROCEDURE GET_CURSOR(
                 CURSOR1 OUT CURSOR,
                 IN_COMMENTS IN VARCHAR2,
-                IN_ID IN NUMBER
+                IN_ID IN NUMBER,
+                OUT_DUMMY1 OUT NUMBER,
+                OUT_DUMMY2 OUT DATE
             )
             IS
             BEGIN
