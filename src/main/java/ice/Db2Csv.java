@@ -169,9 +169,7 @@ public class Db2Csv {
             bindValueList.add(bindValue);
         }
 
-        String bindNameRegexpExpression = "#\\{(" + String.join("|", bindMap.keySet()) + ")}";
-
-        sql = sql.replaceAll(bindNameRegexpExpression, "?");
+        sql = sql.replaceAll(placeHolderPattern, "?");
 
         return prepareStatement(conn, sql, bindValueList.toArray());
     }
