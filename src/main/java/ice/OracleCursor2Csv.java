@@ -97,7 +97,7 @@ public class OracleCursor2Csv extends Db2Csv {
                 case "cond.id":
                     return BigDecimal.valueOf(3);
                 default:
-                    return null;
+                    throw new IllegalArgumentException("不明なバインド変数名です。" + bindName);
             }
         };
 

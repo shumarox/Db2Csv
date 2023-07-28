@@ -247,7 +247,7 @@ public class Db2Csv {
                 case "cond.id":
                     return BigDecimal.valueOf(1);
                 default:
-                    return null;
+                    throw new IllegalArgumentException("不明なバインド変数名です。" + bindName);
             }
         };
 
