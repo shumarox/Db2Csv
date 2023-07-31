@@ -69,7 +69,7 @@ public class OracleCursor2Csv extends Db2Csv {
         int column = 1;
 
         for (Object value : binds) {
-            if (column == cursorParameterIndex || outParameterPlaceHolderIndexSet.contains(column)) {
+            while (column == cursorParameterIndex || outParameterPlaceHolderIndexSet.contains(column)) {
                 column++;
             }
 
