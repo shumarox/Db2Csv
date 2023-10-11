@@ -17,16 +17,24 @@ public class OracleCursor2Csv extends Db2Csv {
 
     public String cursorParameterPlaceHolderPattern = "\\$\\{cursor}";
 
+    public String errorParameterPlaceHolderPattern = "\\$\\{error}";
+
     public String outParameterPlaceHolderPattern = "\\$\\{([^}]+?)}";
 
+    public String getAllOutParameterPlaceHolderPattern() {
+        return cursorParameterPlaceHolderPattern + "|" + errorParameterPlaceHolderPattern + "|" + outParameterPlaceHolderPattern;
+    }
+
     private int cursorParameterIndex = -1;
+
+    private int errorParameterIndex = -1;
 
     private Set<Integer> outParameterPlaceHolderIndexSet = new HashSet<>();
 
     @Override
     public PreparedStatement prepareStatement(Connection conn, String sql, Object[] binds) throws SQLException {
 
-        Pattern pattern = Pattern.compile("\\?|" + cursorParameterPlaceHolderPattern + "|" + outParameterPlaceHolderPattern);
+        Pattern pattern = Pattern.compile("\\?|" + getAllOutParameterPlaceHolderPattern());
         Matcher matcher = pattern.matcher(sql);
 
         int index = 1;
@@ -39,6 +47,11 @@ public class OracleCursor2Csv extends Db2Csv {
                     throw new IllegalArgumentException(cursorParameterPlaceHolderPattern + "は1つのみ設定してください。");
                 }
                 cursorParameterIndex = index;
+            } else if (placeHolder.matches(errorParameterPlaceHolderPattern)) {
+                if (errorParameterIndex != -1) {
+                    throw new IllegalArgumentException(errorParameterPlaceHolderPattern + "は1つのみ設定してください。");
+                }
+                errorParameterIndex = index;
             } else if (placeHolder.matches(outParameterPlaceHolderPattern)) {
                 outParameterPlaceHolderIndexSet.add(index);
             }
@@ -46,7 +59,7 @@ public class OracleCursor2Csv extends Db2Csv {
             index++;
         }
 
-        sql = sql.replaceAll(cursorParameterPlaceHolderPattern + "|" + outParameterPlaceHolderPattern, "?");
+        sql = sql.replaceAll(getAllOutParameterPlaceHolderPattern(), "?");
 
         if (cursorParameterIndex == -1) {
             throw new IllegalArgumentException("CURSOR型のOUT引数に" + cursorParameterPlaceHolderPattern + "を設定してください。");
@@ -62,6 +75,10 @@ public class OracleCursor2Csv extends Db2Csv {
 
         statement.registerOutParameter(cursorParameterIndex, OracleTypes.CURSOR);
 
+        if (errorParameterIndex >= 0) {
+            statement.registerOutParameter(errorParameterIndex, OracleTypes.VARCHAR);
+        }
+
         for (int outParamIndex : outParameterPlaceHolderIndexSet) {
             statement.registerOutParameter(outParamIndex, OracleTypes.VARCHAR);
         }
@@ -69,7 +86,7 @@ public class OracleCursor2Csv extends Db2Csv {
         int column = 1;
 
         for (Object value : binds) {
-            while (column == cursorParameterIndex || outParameterPlaceHolderIndexSet.contains(column)) {
+            while (column == cursorParameterIndex || column == errorParameterIndex || outParameterPlaceHolderIndexSet.contains(column)) {
                 column++;
             }
 
@@ -84,6 +101,14 @@ public class OracleCursor2Csv extends Db2Csv {
     protected ResultSet executeQuery(PreparedStatement statement) throws SQLException {
         CallableStatement cs = (CallableStatement) statement;
         cs.execute();
+
+        if (errorParameterIndex >= 0) {
+            String error = cs.getString(errorParameterIndex);
+            if (error != null && !error.isEmpty()) {
+                throw new RuntimeException(error);
+            }
+        }
+
         return (ResultSet) cs.getObject(cursorParameterIndex);
     }
 
@@ -107,7 +132,7 @@ public class OracleCursor2Csv extends Db2Csv {
 
         String csvPathString = "C:\\temp\\test.csv";
         String jdbcUrlString = "jdbc:oracle:thin:test/test@192.168.0.99:1521/s12c";
-        String sql = "{call test_cursor.get_cursor(${cursor}, #{cond.comments}, #{cond.id}, ${dummy}, ${dummy})}";
+        String sql = "{call test_cursor.get_cursor(${cursor}, #{cond.comments}, #{cond.id}, ${dummy}, ${dummy}, ${error})}";
 
         try (Connection conn = DriverManager.getConnection(jdbcUrlString)) {
             int count = db2Csv.makeCsv(conn, sql, findBindValueFunction, () -> Files.newOutputStream(Paths.get(csvPathString)));
@@ -124,7 +149,8 @@ public class OracleCursor2Csv extends Db2Csv {
                 IN_COMMENTS IN VARCHAR2,
                 IN_ID IN NUMBER,
                 OUT_DUMMY1 OUT NUMBER,
-                OUT_DUMMY2 OUT DATE
+                OUT_DUMMY2 OUT DATE,
+                ERROR OUT VARCHAR2
             );
         END TEST_CURSOR;
         /
@@ -135,10 +161,16 @@ public class OracleCursor2Csv extends Db2Csv {
                 IN_COMMENTS IN VARCHAR2,
                 IN_ID IN NUMBER,
                 OUT_DUMMY1 OUT NUMBER,
-                OUT_DUMMY2 OUT DATE
+                OUT_DUMMY2 OUT DATE,
+                ERROR OUT VARCHAR2
             )
             IS
             BEGIN
+                IF IN_ID IS NULL THEN
+                    ERROR := 'IDを指定してください';
+                    RETURN;
+                END IF;
+
                 OPEN CURSOR1 FOR
                     SELECT IN_COMMENTS AS "COMMENTS", IN_ID AS "COND", A.* FROM TEST A
                     WHERE A.ID LIKE '%' || IN_ID || '%' ESCAPE '\'
